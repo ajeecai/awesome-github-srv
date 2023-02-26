@@ -1,0 +1,199 @@
+service: awesome-github
+frameworkVersion: "3"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  # - serverless-offline-scheduler
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  memorySize: 128 # optional, in MB, default is 1024
+  timeout: 10 # optional, in seconds, default is 6
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+      
+      Resource: "*"
+      # or Resource: "arn:aws:dynamodb:${aws:region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+    - Effect: "Allow"
+      Action:
+        - "lambda:*"
+      Resource:
+        - "*"
+
+    - Effect: "Allow"
+      Action:
+        - "ses:*"
+      Resource:
+        - "*"
+    
+    - Effect: "Allow"
+      Action:
+        - "sns:*"
+      Resource:
+        - "*"
+
+  environment:
+    DYNAMODB_TABLE: ${self:custom.tableName}
+    ADMIN_EMAIL: ${self:custom.adminEmail}
+    API_URL: ${self:custom.apiUrl}
+    UI_URL: ${self:custom.uiUrl}
+    S3_BUCKET: ${self:custom.bucket}
+    SNS_TOPIC_ARN: arn:aws:sns:${aws:region}:${aws:accountId}:${self:custom.adminSnsArn}
+    PROJECT_ID: ${file(./config/bigquery-config.json):project_id}
+    CLIENT_EMAIL: ${file(./config/bigquery-config.json):client_email}
+    PRIVATE_KEY: ${file(./config/bigquery-config.json):private_key}
+    # TODO: change these below for production deploy
+    RECAP_SECRET: "<Your Site Secret>"
+    CHATGPT_URL: "<Your chat proxy IP>"
+    CHATGPT_KEY: "<Your chat proxy pre-sharedkey>"
+functions:
+  userLogin:
+    handler: handler/userLogin.userLogin
+    timeout: 10
+    events:
+    - http:
+        path: /login
+        method: post
+  userInfo:
+    handler: handler/getUserInfo.getUserInfo
+    timeout: 10
+    events:
+    - http:
+        path: /getuserinfo
+        method: get
+  modifyUserInfo:
+    handler: handler/modifyUserInfo.modifyUserInfo
+    timeout: 10
+    events:
+    - http:
+        path: /modifyuserinfo
+        method: post
+  signup:
+    handler: handler/signUpUser.signUpUser
+    timeout: 10
+    events:
+    - http:
+        path: /signup
+        method: post
+  resetpass:
+    handler: handler/resetPassword.resetPassword
+    timeout: 10
+    events:
+    - http:
+        path: /resetpass
+        method: get
+  langrepos:
+    handler: handler/getReposOfLangs.getReposOfLangs
+    timeout: 10
+    events:
+    - http:
+        path: /langrepos
+        method: get
+  querytip:
+    handler: handler/queryTip.queryTip
+    timeout: 10
+    events:
+    - http:
+        path: /querytip
+        method: post
+  langmilestone:
+    handler: handler/getLangMileStone.getLangMileStone
+    timeout: 30
+    events:
+      - http:
+          path: /langmilestone
+          method: get
+  subscribeTopic:
+    handler: handler/subscribeTopic.subscribeTopic
+    events:
+      - http:
+          path: /subscribetopic
+          method: post
+  verifyEmail:
+    handler: handler/verifyEmail.verifyEmail
+    events:
+      - http:
+          path: /verifyEmail
+          method: get
+  chatgpt:
+    handler: handler/chatGpt.chatGpt
+    timeout: 10
+    events:
+      - http:
+          path: /chatgpt
+          method: post
+  cronSendEmail:
+    handler: handler/cronSendEmail.cronSendEmail
+    timeout: 30
+    events:
+      - http:
+          path: /cronSendEmail
+          method: get
+      - schedule: cron(0 0 ? * Fri *)
+      # - schedule: rate(1 minute) or rate(10 minutes)
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+  bucket: "awesome-github-s3"
+  tableName: "awesome-github-db"
+  adminSnsArn: "msg-admin-notifier"
+  # TODO: change these below for production deploy
+  apiUrl: "<Your API server URL>"
+  uiUrl: "Your UI host server URL"
+  adminEmail: "<Your admin email>"
+  stages:
+    - dev
+    # - test
+    # - acc
+    # - prod
+
+# CloudFormation template syntax
+resources:
+  Resources:
+    myS3: # friendly name, not used
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+
+    myDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    
+    #SNS
+    adminMessages:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.adminSnsArn}
+    adminSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref adminMessages
+        Protocol: email
+        Endpoint: ${self:custom.adminEmail}
+        DeliveryPolicy: 
+          healthyRetryPolicy:
+            numRetries: 20
+            minDelayTarget: 30
+            maxDelayTarget: 600
+            backoffFunction: exponential

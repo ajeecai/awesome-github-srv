@@ -1,0 +1,14 @@
+# package directories
+node_modules
+jspm_packages
+package-lock.json
+
+# Serverless directories
+.serverless
+.build
+config/bigquery-config.json
+
+# Webpack directories
+.webpack
+/email-service.iml
+/.idea/
